@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kratos/kratos/v2/config"
-	"github.com/go-lynx/lynx/app"
-	"github.com/go-lynx/lynx/app/log"
-	"github.com/go-lynx/lynx/plugins/nacos/conf"
+	"github.com/go-lynx/lynx"
+	"github.com/go-lynx/lynx-nacos/conf"
+	"github.com/go-lynx/lynx/log"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
@@ -91,16 +91,16 @@ func (s *NacosConfigSource) Watch() (config.Watcher, error) {
 
 // NacosConfigWatcher implements config.Watcher interface
 type NacosConfigWatcher struct {
-	client      config_client.IConfigClient
-	dataId      string
-	group       string
-	format      string
-	stopCh      chan struct{}
-	eventCh     chan []*config.KeyValue
-	mu          sync.RWMutex
-	running     bool
-	stopOnce    sync.Once
-	closed      int32 // Use atomic for checking if channels are closed
+	client   config_client.IConfigClient
+	dataId   string
+	group    string
+	format   string
+	stopCh   chan struct{}
+	eventCh  chan []*config.KeyValue
+	mu       sync.RWMutex
+	running  bool
+	stopOnce sync.Once
+	closed   int32 // Use atomic for checking if channels are closed
 }
 
 // NewNacosConfigWatcher creates a new Nacos config watcher
@@ -127,8 +127,8 @@ func (w *NacosConfigWatcher) Start(ctx context.Context) error {
 
 	// Listen to config changes
 	param := vo.ConfigParam{
-		DataId:  w.dataId,
-		Group:   w.group,
+		DataId:   w.dataId,
+		Group:    w.group,
 		OnChange: w.handleConfigChange,
 	}
 
@@ -309,7 +309,7 @@ func (p *PlugNacos) GetConfigSources() ([]config.Source, error) {
 
 // getMainConfigSource gets the main configuration source
 func (p *PlugNacos) getMainConfigSource() (config.Source, error) {
-	appName := app.GetName()
+	appName := lynx.GetName()
 	if appName == "" {
 		appName = "application"
 	}
@@ -445,4 +445,3 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 
 	return nil
 }
-

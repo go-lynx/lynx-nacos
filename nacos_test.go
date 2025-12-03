@@ -3,7 +3,7 @@ package nacos
 import (
 	"testing"
 
-	"github.com/go-lynx/lynx/plugins/nacos/conf"
+	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -349,7 +349,7 @@ func TestPlugNacos_Configure(t *testing.T) {
 	// Test valid configuration
 	newConfig := &conf.Nacos{
 		ServerAddresses: "127.0.0.1:8849",
-		Namespace:      "test-namespace",
+		Namespace:       "test-namespace",
 	}
 	err = plugin.Configure(newConfig)
 	assert.NoError(t, err)
@@ -409,4 +409,3 @@ func TestErrorWrapping(t *testing.T) {
 	assert.Error(t, wrapped)
 	assert.Contains(t, wrapped.Error(), "test operation")
 }
-

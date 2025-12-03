@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kratos/kratos/v2/registry"
-	"github.com/go-lynx/lynx/app/log"
-	"github.com/go-lynx/lynx/plugins/nacos/conf"
+	"github.com/go-lynx/lynx-nacos/conf"
+	"github.com/go-lynx/lynx/log"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/model"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
@@ -503,4 +503,3 @@ func (p *PlugNacos) NewServiceDiscovery() registry.Discovery {
 
 	return NewNacosDiscovery(p.namingClient, p.getNamespace(), group, cluster)
 }
-

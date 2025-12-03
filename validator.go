@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-lynx/lynx/plugins/nacos/conf"
+	"github.com/go-lynx/lynx-nacos/conf"
 )
 
 // validateConfig validates Nacos configuration
@@ -158,4 +158,3 @@ func normalizeServerAddresses(addresses string) []string {
 
 	return result
 }
-
