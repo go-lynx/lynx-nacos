@@ -6,6 +6,7 @@ require (
 	github.com/go-kratos/kratos/v2 v2.9.1
 	github.com/go-lynx/lynx v1.5.3
 	github.com/nacos-group/nacos-sdk-go/v2 v2.2.5
+	github.com/prometheus/client_golang v1.23.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/protobuf v1.36.10
 )
@@ -42,7 +43,6 @@ require (
 	github.com/panjf2000/ants/v2 v2.11.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/prometheus/client_golang v1.23.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
