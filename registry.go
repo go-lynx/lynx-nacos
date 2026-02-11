@@ -144,7 +144,8 @@ func (r *NacosRegistrar) Deregister(ctx context.Context, service *registry.Servi
 	return nil
 }
 
-// parseEndpoint parses endpoint string to extract host and port
+// parseEndpoint parses endpoint string to extract host and port.
+// Supports IPv4 (host:port), IPv6 ([host]:port), and protocol-prefixed formats.
 func parseEndpoint(endpoints []string) (string, int, error) {
 	if len(endpoints) == 0 {
 		return "", 0, fmt.Errorf("no endpoints provided")
@@ -158,14 +159,30 @@ func parseEndpoint(endpoints []string) (string, int, error) {
 	endpoint = strings.TrimPrefix(endpoint, "grpc://")
 	endpoint = strings.TrimPrefix(endpoint, "grpcs://")
 
-	// Parse host and port
-	parts := strings.Split(endpoint, ":")
-	if len(parts) != 2 {
-		return "", 0, fmt.Errorf("invalid endpoint format: %s", endpoints[0])
+	// Handle IPv6 format: [::1]:8080 or [2001:db8::1]:8080
+	var host, portStr string
+	if strings.HasPrefix(endpoint, "[") {
+		closeBracket := strings.Index(endpoint, "]")
+		if closeBracket == -1 {
+			return "", 0, fmt.Errorf("invalid IPv6 endpoint format: %s", endpoints[0])
+		}
+		host = endpoint[1:closeBracket]
+		rest := endpoint[closeBracket+1:]
+		if !strings.HasPrefix(rest, ":") {
+			return "", 0, fmt.Errorf("invalid IPv6 endpoint format (missing port): %s", endpoints[0])
+		}
+		portStr = strings.TrimPrefix(rest, ":")
+	} else {
+		// IPv4 format: host:port
+		parts := strings.SplitN(endpoint, ":", 2)
+		if len(parts) != 2 {
+			return "", 0, fmt.Errorf("invalid endpoint format: %s", endpoints[0])
+		}
+		host = parts[0]
+		portStr = parts[1]
 	}
 
-	host := parts[0]
-	port, err := strconv.Atoi(parts[1])
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid port in endpoint: %w", err)
 	}
@@ -346,6 +363,12 @@ func (w *ServiceWatcher) Start(ctx context.Context) error {
 
 // handleServiceChange handles service change events
 func (w *ServiceWatcher) handleServiceChange(services []model.Instance, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warnf("Recovered from panic in service watcher for %s: %v", w.serviceName, r)
+		}
+	}()
+
 	if err != nil {
 		log.Errorf("Service watcher error for %s: %v", w.serviceName, err)
 		return

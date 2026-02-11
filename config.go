@@ -154,6 +154,12 @@ func (w *NacosConfigWatcher) Start(ctx context.Context) error {
 
 // handleConfigChange handles configuration change events
 func (w *NacosConfigWatcher) handleConfigChange(namespace, group, dataId, data string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warnf("Recovered from panic in config watcher for dataId %s: %v", dataId, r)
+		}
+	}()
+
 	if dataId != w.dataId || group != w.group {
 		return
 	}
@@ -246,8 +252,15 @@ func (cw *ConfigWatcher) Start() error {
 
 // Stop stops the watcher
 func (cw *ConfigWatcher) Stop() {
-	cw.cancel()
-	_ = cw.watcher.Stop()
+	if cw == nil {
+		return
+	}
+	if cw.cancel != nil {
+		cw.cancel()
+	}
+	if cw.watcher != nil {
+		_ = cw.watcher.Stop()
+	}
 }
 
 // GetConfig gets configuration from Nacos
@@ -438,7 +451,14 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 			}
 
 			if len(kvs) > 0 && callback != nil {
-				callback(string(kvs[0].Value))
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Warnf("Recovered from panic in WatchConfig callback for %s:%s: %v", dataId, group, r)
+						}
+					}()
+					callback(string(kvs[0].Value))
+				}()
 			}
 		}
 	}()

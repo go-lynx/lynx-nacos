@@ -1,6 +1,7 @@
 package nacos
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-lynx/lynx-nacos/conf"
@@ -393,6 +394,64 @@ func TestPlugNacos_StartupTasks(t *testing.T) {
 
 	err := plugin.StartupTasks()
 	assert.NoError(t, err)
+}
+
+// TestParseEndpoint tests endpoint parsing including IPv6
+func TestParseEndpoint(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoints []string
+		wantHost  string
+		wantPort  int
+		wantErr   bool
+	}{
+		{
+			name:      "ipv4 with grpc",
+			endpoints: []string{"grpc://127.0.0.1:8080"},
+			wantHost:  "127.0.0.1",
+			wantPort:  8080,
+			wantErr:   false,
+		},
+		{
+			name:      "ipv4 plain",
+			endpoints: []string{"127.0.0.1:9090"},
+			wantHost:  "127.0.0.1",
+			wantPort:  9090,
+			wantErr:   false,
+		},
+		{
+			name:      "ipv6 localhost",
+			endpoints: []string{"[::1]:8080"},
+			wantHost:  "::1",
+			wantPort:  8080,
+			wantErr:   false,
+		},
+		{
+			name:      "ipv6 with protocol",
+			endpoints: []string{"http://[2001:db8::1]:8443"},
+			wantHost:  "2001:db8::1",
+			wantPort:  8443,
+			wantErr:   false,
+		},
+		{
+			name:      "empty endpoints",
+			endpoints: []string{},
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, port, err := parseEndpoint(tt.endpoints)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantHost, host)
+			assert.Equal(t, tt.wantPort, port)
+		})
+	}
 }
 
 // TestErrorWrapping tests error wrapping functions

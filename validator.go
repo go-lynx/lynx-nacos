@@ -33,11 +33,14 @@ func (p *PlugNacos) validateConfig() error {
 
 	// Validate additional configs
 	for i, cfg := range p.conf.AdditionalConfigs {
+		if cfg == nil {
+			return fmt.Errorf("additional_configs[%d] cannot be nil", i)
+		}
 		if cfg.DataId == "" {
 			return fmt.Errorf("additional_configs[%d].data_id is required", i)
 		}
 		if cfg.Group == "" {
-			cfg.Group = conf.DefaultGroup
+			p.conf.AdditionalConfigs[i].Group = conf.DefaultGroup
 		}
 	}
 
