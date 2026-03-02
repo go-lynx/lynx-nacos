@@ -23,7 +23,7 @@ import (
 // Plugin metadata
 const (
 	pluginName        = "nacos.control.plane"
-	pluginVersion     = "v2.0.0"
+	pluginVersion     = "v1.5.4"
 	pluginDescription = "nacos control plane plugin for lynx framework"
 	confPrefix        = "lynx.nacos"
 )
