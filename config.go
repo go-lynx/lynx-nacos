@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kratos/kratos/v2/config"
-	"github.com/go-lynx/lynx"
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/log"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
@@ -322,7 +321,7 @@ func (p *PlugNacos) GetConfigSources() ([]config.Source, error) {
 
 // getMainConfigSource gets the main configuration source
 func (p *PlugNacos) getMainConfigSource() (config.Source, error) {
-	appName := lynx.GetName()
+	appName := currentLynxName()
 	if appName == "" {
 		appName = "application"
 	}

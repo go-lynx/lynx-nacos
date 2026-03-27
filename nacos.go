@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2/middleware"
 	"github.com/go-kratos/kratos/v2/selector"
-	"github.com/go-lynx/lynx"
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/log"
 	"github.com/go-lynx/lynx/plugins"
@@ -32,6 +31,7 @@ const (
 type PlugNacos struct {
 	*plugins.BasePlugin
 	conf *conf.Nacos
+	rt   plugins.Runtime
 
 	// SDK clients
 	namingClient naming_client.INamingClient
@@ -90,6 +90,7 @@ func NewNacosControlPlane() *PlugNacos {
 
 // InitializeResources implements custom initialization logic for the Nacos plugin
 func (p *PlugNacos) InitializeResources(rt plugins.Runtime) error {
+	p.rt = rt
 	// Initialize an empty configuration structure
 	p.conf = &conf.Nacos{}
 
@@ -322,8 +323,16 @@ func (p *PlugNacos) StartupTasks() error {
 		}()
 	}
 
+	if err := p.publishRuntimeResources(); err != nil {
+		log.Errorf("Failed to publish Nacos runtime resources: %v", err)
+		if p.metrics != nil {
+			p.metrics.RecordSDKOperation("startup", "error")
+		}
+		return WrapInitError(err, "failed to publish runtime resources")
+	}
+
 	// Set Nacos as the Lynx control plane
-	if err := lynx.Lynx().SetControlPlane(p); err != nil {
+	if err := currentLynxApp().SetControlPlane(p); err != nil {
 		log.Errorf("Failed to set Nacos as control plane: %v", err)
 		if p.metrics != nil {
 			p.metrics.RecordSDKOperation("startup", "error")
@@ -332,6 +341,40 @@ func (p *PlugNacos) StartupTasks() error {
 	}
 
 	log.Infof("Nacos plugin started successfully and set as control plane")
+	return nil
+}
+
+func (p *PlugNacos) publishRuntimeResources() error {
+	if p.rt == nil {
+		return nil
+	}
+	if err := p.rt.RegisterSharedResource(pluginName, p); err != nil {
+		return err
+	}
+	if p.conf.EnableRegister {
+		if registrar := p.NewServiceRegistry(); registrar != nil {
+			if err := p.rt.RegisterSharedResource(pluginName+".service_registry", registrar); err != nil {
+				log.Warnf("failed to register nacos service registry resource: %v", err)
+			}
+		}
+	}
+	if p.conf.EnableDiscovery {
+		if discovery := p.NewServiceDiscovery(); discovery != nil {
+			if err := p.rt.RegisterSharedResource(pluginName+".service_discovery", discovery); err != nil {
+				log.Warnf("failed to register nacos service discovery resource: %v", err)
+			}
+		}
+	}
+	if p.namingClient != nil {
+		if err := p.rt.RegisterPrivateResource("naming_client", p.namingClient); err != nil {
+			log.Warnf("failed to register nacos private naming client resource: %v", err)
+		}
+	}
+	if p.configClient != nil {
+		if err := p.rt.RegisterPrivateResource("config_client", p.configClient); err != nil {
+			log.Warnf("failed to register nacos private config client resource: %v", err)
+		}
+	}
 	return nil
 }
 

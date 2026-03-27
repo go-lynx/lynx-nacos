@@ -97,7 +97,7 @@ func TestPlugNacos_validateConfig(t *testing.T) {
 			name: "valid config with additional configs",
 			config: &conf.Nacos{
 				ServerAddresses: "127.0.0.1:8848",
-				AdditionalConfigs: []*conf.AdditionalConfig{
+				AdditionalConfigs: []*conf.ConfigSource{
 					{
 						DataId: "test-config",
 						Group:  "DEFAULT_GROUP",
@@ -110,7 +110,7 @@ func TestPlugNacos_validateConfig(t *testing.T) {
 			name: "invalid config - additional config without dataId",
 			config: &conf.Nacos{
 				ServerAddresses: "127.0.0.1:8848",
-				AdditionalConfigs: []*conf.AdditionalConfig{
+				AdditionalConfigs: []*conf.ConfigSource{
 					{
 						DataId: "",
 						Group:  "DEFAULT_GROUP",
