@@ -22,7 +22,7 @@ import (
 // Plugin metadata
 const (
 	pluginName        = "nacos.control.plane"
-	pluginVersion     = "v1.6.0-beta"
+	pluginVersion     = "v1.5.5"
 	pluginDescription = "nacos control plane plugin for lynx framework"
 	confPrefix        = "lynx.nacos"
 )
@@ -55,8 +55,8 @@ type PlugNacos struct {
 	watcherMutex   sync.RWMutex
 
 	// Cache system
-	serviceCache map[string]interface{}
-	configCache  map[string]interface{}
+	serviceCache map[string]any
+	configCache  map[string]any
 	cacheMutex   sync.RWMutex
 }
 
@@ -83,8 +83,8 @@ func NewNacosControlPlane() *PlugNacos {
 			math.MaxInt, // High priority
 		),
 		configWatchers: make(map[string]*ConfigWatcher),
-		serviceCache:   make(map[string]interface{}),
-		configCache:    make(map[string]interface{}),
+		serviceCache:   make(map[string]any),
+		configCache:    make(map[string]any),
 	}
 }
 
@@ -309,39 +309,9 @@ func (p *PlugNacos) checkInitialized() error {
 
 // StartupTasks implements plugin startup interface
 func (p *PlugNacos) StartupTasks() error {
-	if err := p.checkInitialized(); err != nil {
-		return err
-	}
-
-	// Record startup metrics
-	if p.metrics != nil {
-		p.metrics.RecordSDKOperation("startup", "start")
-		defer func() {
-			if p.metrics != nil {
-				p.metrics.RecordSDKOperation("startup", "success")
-			}
-		}()
-	}
-
-	if err := p.publishRuntimeResources(); err != nil {
-		log.Errorf("Failed to publish Nacos runtime resources: %v", err)
-		if p.metrics != nil {
-			p.metrics.RecordSDKOperation("startup", "error")
-		}
-		return WrapInitError(err, "failed to publish runtime resources")
-	}
-
-	// Set Nacos as the Lynx control plane
-	if err := currentLynxApp().SetControlPlane(p); err != nil {
-		log.Errorf("Failed to set Nacos as control plane: %v", err)
-		if p.metrics != nil {
-			p.metrics.RecordSDKOperation("startup", "error")
-		}
-		return WrapInitError(err, "failed to set control plane")
-	}
-
-	log.Infof("Nacos plugin started successfully and set as control plane")
-	return nil
+	ctx, cancel := p.cleanupContext()
+	defer cancel()
+	return p.startupTasksContext(ctx)
 }
 
 func (p *PlugNacos) publishRuntimeResources() error {
@@ -380,42 +350,9 @@ func (p *PlugNacos) publishRuntimeResources() error {
 
 // CheckHealth implements plugin health check interface
 func (p *PlugNacos) CheckHealth() error {
-	if err := p.checkInitialized(); err != nil {
-		return err
-	}
-
-	if p.metrics != nil {
-		p.metrics.RecordHealthCheck("nacos", "start")
-	}
-
-	if p.circuitBreaker == nil || p.retryManager == nil {
-		return WrapInitError(fmt.Errorf("resilience components not initialized"), "health check")
-	}
-
-	var healthErr error
-	err := p.circuitBreaker.Do(func() error {
-		return p.retryManager.DoWithRetry(func() error {
-			if err := p.checkNacosConnectivity(); err != nil {
-				healthErr = err
-				return err
-			}
-			return nil
-		})
-	})
-
-	if err != nil {
-		log.Errorf("Nacos health check failed: %v", healthErr)
-		if p.metrics != nil {
-			p.metrics.RecordHealthCheck("nacos", "error")
-			p.metrics.RecordHealthCheckFailed("nacos", fmt.Sprintf("%T", healthErr))
-		}
-		return WrapOperationError(healthErr, "health check")
-	}
-
-	if p.metrics != nil {
-		p.metrics.RecordHealthCheck("nacos", "success")
-	}
-	return nil
+	ctx, cancel := p.cleanupContext()
+	defer cancel()
+	return p.checkHealthContext(ctx)
 }
 
 // checkNacosConnectivity verifies connectivity to Nacos server
@@ -475,33 +412,9 @@ func (p *PlugNacos) NewNodeRouter(serviceName string) selector.NodeFilter {
 
 // CleanupTasks implements plugin cleanup interface
 func (p *PlugNacos) CleanupTasks() error {
-	atomic.StoreInt32(&p.destroyed, 1)
-
-	// Stop all config watchers (with panic recovery)
-	p.watcherMutex.Lock()
-	for _, watcher := range p.configWatchers {
-		if watcher != nil {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Warnf("Recovered from panic while stopping config watcher: %v", r)
-					}
-				}()
-				watcher.Stop()
-			}()
-		}
-	}
-	p.configWatchers = make(map[string]*ConfigWatcher)
-	p.watcherMutex.Unlock()
-
-	// Clear caches
-	p.cacheMutex.Lock()
-	p.serviceCache = make(map[string]interface{})
-	p.configCache = make(map[string]interface{})
-	p.cacheMutex.Unlock()
-
-	log.Infof("Nacos plugin cleaned up successfully")
-	return nil
+	ctx, cancel := p.cleanupContext()
+	defer cancel()
+	return p.cleanupTasksContext(ctx)
 }
 
 // Configure updates the plugin configuration

@@ -208,6 +208,7 @@ func (w *NacosConfigWatcher) Stop() error {
 	}
 
 	// Use sync.Once to ensure channels are closed only once
+	var cancelErr error
 	w.stopOnce.Do(func() {
 		// Mark as closed atomically
 		atomic.StoreInt32(&w.closed, 1)
@@ -217,13 +218,18 @@ func (w *NacosConfigWatcher) Stop() error {
 			DataId: w.dataId,
 			Group:  w.group,
 		}
-		_ = w.client.CancelListenConfig(param)
+		if w.client != nil {
+			cancelErr = w.client.CancelListenConfig(param)
+		}
 
 		// Close channels safely
 		close(w.stopCh)
 		close(w.eventCh)
 	})
 
+	if cancelErr != nil {
+		return fmt.Errorf("cancel listen config %s/%s: %w", w.group, w.dataId, cancelErr)
+	}
 	return nil
 }
 
@@ -250,16 +256,17 @@ func (cw *ConfigWatcher) Start() error {
 }
 
 // Stop stops the watcher
-func (cw *ConfigWatcher) Stop() {
+func (cw *ConfigWatcher) Stop() error {
 	if cw == nil {
-		return
+		return nil
 	}
 	if cw.cancel != nil {
 		cw.cancel()
 	}
 	if cw.watcher != nil {
-		_ = cw.watcher.Stop()
+		return cw.watcher.Stop()
 	}
+	return nil
 }
 
 // GetConfig gets configuration from Nacos

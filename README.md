@@ -71,68 +71,53 @@ func wireApp() (*kratos.App, error) {
 
 ## Configuration Reference
 
-### Basic Configuration
+### Configuration Options
 
-```yaml
-lynx:
-  nacos:
-    # Required: Nacos server addresses (comma-separated for cluster)
-    server_addresses: "127.0.0.1:8848,127.0.0.1:8849"
-    
-    # Optional: Use endpoint instead of server_addresses
-    # endpoint: "http://nacos.example.com"
-    
-    # Namespace configuration
-    namespace_id: ""  # Use namespace_id or namespace
-    namespace: "public"  # Default: public
-    
-    # Authentication
-    username: "nacos"
-    password: "nacos"
-    # Or use access_key and secret_key
-    # access_key: ""
-    # secret_key: ""
-    
-    # Service instance configuration
-    weight: 1.0
-    metadata:
-      version: "v1.0.0"
-      env: "production"
-    
-    # Feature flags
-    enable_register: true
-    enable_discovery: true
-    enable_config: true
-    
-    # Connection settings
-    timeout: 5  # seconds
-    notify_timeout: 3000  # milliseconds
-    
-    # Logging
-    log_level: "info"  # debug, info, warn, error
-    log_dir: "./logs/nacos"
-    cache_dir: "./cache/nacos"
-    
-    # Service registration
-    service_config:
-      service_name: "my-service"
-      group: "DEFAULT_GROUP"
-      cluster: "DEFAULT"
-      health_check: true
-      health_check_interval: 5
-      health_check_timeout: 3
-      health_check_type: "tcp"  # none, tcp, http, mysql
-      health_check_url: ""
-    
-    # Additional configuration sources
-    additional_configs:
-      - data_id: "database-config"
-        group: "DEFAULT_GROUP"
-        format: "yaml"
-      - data_id: "redis-config"
-        group: "DEFAULT_GROUP"
-        format: "yaml"
-```
+#### Connection & Auth
+- `server_addresses` (string, required): Nacos server addresses (comma-separated). Example: `"127.0.0.1:8848"`
+- `endpoint` (string, optional): Endpoint for Nacos server (alternative to `server_addresses`). Example: `"http://nacos.example.com"`
+- `context_path` (string, optional): Context path for Nacos server. Example: `"/nacos"`
+- `region_id` (string, optional): Region ID. Example: `"us-east-1"`
+- `namespace_id` (string, optional): Namespace ID. Example: `"your-namespace-id"`
+- `namespace` (string, default: `"public"`): Namespace name (alternative to `namespace_id`).
+- `username` (string, optional): Username for authentication.
+- `password` (string, optional): Password for authentication.
+- `access_key` (string, optional): Access key for authentication.
+- `secret_key` (string, optional): Secret key for authentication.
+
+#### Service Instance
+- `weight` (double, default: `1.0`): Service instance weight. Example: `1.0`
+- `metadata` (map<string, string>, optional): Service instance metadata. Example: `{"version": "v1.0.0"}`
+
+#### Feature Flags
+- `enable_register` (bool, default: `false`): Enable service registration to Nacos.
+- `enable_discovery` (bool, default: `false`): Enable service discovery from Nacos.
+- `enable_config` (bool, default: `false`): Enable configuration management from Nacos.
+
+#### Settings & Logging
+- `timeout` (uint64, default: `5`): Connection timeout in seconds.
+- `notify_timeout` (uint64, default: `3000`): Notify timeout in milliseconds.
+- `log_level` (string, default: `"info"`): Log level (debug, info, warn, error).
+- `log_dir` (string, optional): Log directory. Example: `"./logs/nacos"`
+- `cache_dir` (string, optional): Cache directory. Example: `"./cache/nacos"`
+
+#### Service Configuration (for registration)
+- `service_config.service_name` (string, required): Service name for registration.
+- `service_config.group` (string, default: `"DEFAULT_GROUP"`): Group name.
+- `service_config.cluster` (string, default: `"DEFAULT"`): Cluster name.
+- `service_config.health_check` (bool, default: `true`): Enable health check.
+- `service_config.health_check_interval` (uint64, default: `5`): Health check interval in seconds.
+- `service_config.health_check_timeout` (uint64, default: `3`): Health check timeout in seconds.
+- `service_config.health_check_type` (string, default: `"tcp"`): Health check type (`none`, `tcp`, `http`, `mysql`).
+- `service_config.health_check_url` (string, optional): Health check URL (for http type).
+
+#### Additional Configuration Sources
+- `additional_configs` (repeated ConfigSource, optional): List of additional configuration sources to load.
+  - `data_id` (string, required): Configuration data ID.
+  - `group` (string, default: `"DEFAULT_GROUP"`): Configuration group.
+  - `format` (string, default: `"yaml"`): Configuration format (`yaml`, `json`, `properties`, `xml`).
+
+### Basic Configuration Example
 
 ## API Reference
 

@@ -7,8 +7,5 @@ func currentLynxApp() *lynx.LynxApp {
 }
 
 func currentLynxName() string {
-	if app := currentLynxApp(); app != nil {
-		return app.Name()
-	}
-	return ""
+	return lynx.GetName()
 }

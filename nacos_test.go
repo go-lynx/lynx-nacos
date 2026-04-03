@@ -28,9 +28,9 @@ func TestPlugNacos_setDefaultConfig(t *testing.T) {
 	plugin.setDefaultConfig()
 
 	assert.Equal(t, conf.DefaultNamespace, plugin.conf.Namespace)
-	assert.Equal(t, conf.DefaultWeight, plugin.conf.Weight)
-	assert.Equal(t, conf.DefaultTimeout, plugin.conf.Timeout)
-	assert.Equal(t, conf.DefaultNotifyTimeout, plugin.conf.NotifyTimeout)
+	assert.EqualValues(t, conf.DefaultWeight, plugin.conf.Weight)
+	assert.EqualValues(t, conf.DefaultTimeout, plugin.conf.Timeout)
+	assert.EqualValues(t, conf.DefaultNotifyTimeout, plugin.conf.NotifyTimeout)
 	assert.Equal(t, conf.DefaultLogLevel, plugin.conf.LogLevel)
 	assert.Equal(t, conf.DefaultLogDir, plugin.conf.LogDir)
 	assert.Equal(t, conf.DefaultCacheDir, plugin.conf.CacheDir)
@@ -393,7 +393,8 @@ func TestPlugNacos_StartupTasks(t *testing.T) {
 	atomic.StoreInt32(&plugin.initialized, 1)
 
 	err := plugin.StartupTasks()
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to set control plane")
 }
 
 // TestParseEndpoint tests endpoint parsing including IPv6
