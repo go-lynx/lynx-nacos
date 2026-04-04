@@ -124,6 +124,23 @@ func (p *PlugNacos) startupTasksContext(ctx context.Context) (startErr error) {
 	}
 
 	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("startup cancelled before setting control plane: %w", err)
+	}
+	if err := currentLynxApp().SetControlPlane(p); err != nil {
+		log.Errorf("Failed to set Nacos as control plane: %v", err)
+		return WrapInitError(err, "failed to set control plane")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("startup cancelled before initializing control plane config: %w", err)
+	}
+	cfg, err := currentLynxApp().InitControlPlaneConfig()
+	if err != nil {
+		log.Errorf("Failed to init Nacos control plane config: %v", err)
+		return WrapInitError(err, "failed to init control plane config")
+	}
+
+	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("startup cancelled before publishing runtime resources: %w", err)
 	}
 	if err := p.publishRuntimeResources(); err != nil {
@@ -132,11 +149,11 @@ func (p *PlugNacos) startupTasksContext(ctx context.Context) (startErr error) {
 	}
 
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("startup cancelled before setting control plane: %w", err)
+		return fmt.Errorf("startup cancelled before loading dependent plugins: %w", err)
 	}
-	if err := currentLynxApp().SetControlPlane(p); err != nil {
-		log.Errorf("Failed to set Nacos as control plane: %v", err)
-		return WrapInitError(err, "failed to set control plane")
+	if err := currentLynxApp().GetPluginManager().LoadPlugins(cfg); err != nil {
+		log.Errorf("Failed to load plugins from Nacos control plane config: %v", err)
+		return WrapInitError(err, "failed to load dependent plugins")
 	}
 
 	log.Infof("Nacos plugin started successfully and set as control plane")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/middleware"
 	"github.com/go-kratos/kratos/v2/selector"
+	"github.com/go-lynx/lynx"
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/log"
 	"github.com/go-lynx/lynx/plugins"
@@ -318,7 +319,7 @@ func (p *PlugNacos) publishRuntimeResources() error {
 	if p.rt == nil {
 		return nil
 	}
-	if err := p.rt.RegisterSharedResource(pluginName, p); err != nil {
+	if err := lynx.RegisterControlPlaneCapabilityResources(p.rt, pluginName, p); err != nil {
 		return err
 	}
 	if p.conf.EnableRegister {
@@ -336,11 +337,17 @@ func (p *PlugNacos) publishRuntimeResources() error {
 		}
 	}
 	if p.namingClient != nil {
+		if err := p.rt.RegisterPrivateResource("naming_client_sdk", p.namingClient); err != nil {
+			log.Warnf("failed to register nacos private naming client sdk resource: %v", err)
+		}
 		if err := p.rt.RegisterPrivateResource("naming_client", p.namingClient); err != nil {
 			log.Warnf("failed to register nacos private naming client resource: %v", err)
 		}
 	}
 	if p.configClient != nil {
+		if err := p.rt.RegisterPrivateResource("config_client_sdk", p.configClient); err != nil {
+			log.Warnf("failed to register nacos private config client sdk resource: %v", err)
+		}
 		if err := p.rt.RegisterPrivateResource("config_client", p.configClient); err != nil {
 			log.Warnf("failed to register nacos private config client resource: %v", err)
 		}
@@ -393,6 +400,21 @@ func (p *PlugNacos) checkNacosConnectivity() error {
 // GetNamespace returns the Nacos namespace
 func (p *PlugNacos) GetNamespace() string {
 	return p.getNamespace()
+}
+
+// ControlPlaneCapabilities declares Nacos' explicit control plane contract.
+func (p *PlugNacos) ControlPlaneCapabilities() []lynx.ControlPlaneCapability {
+	capabilities := []lynx.ControlPlaneCapability{
+		lynx.ControlPlaneCapabilityConfig,
+		lynx.ControlPlaneCapabilityWatcher,
+	}
+	if p.conf != nil && p.conf.EnableRegister {
+		capabilities = append(capabilities, lynx.ControlPlaneCapabilityRegistry)
+	}
+	if p.conf != nil && p.conf.EnableDiscovery {
+		capabilities = append(capabilities, lynx.ControlPlaneCapabilityDiscovery)
+	}
+	return capabilities
 }
 
 // HTTPRateLimit returns HTTP rate limit middleware (Nacos does not have built-in rate limiting)

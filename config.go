@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/go-kratos/kratos/v2/config"
+	"github.com/go-lynx/lynx"
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/log"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
@@ -85,7 +86,11 @@ func (s *NacosConfigSource) Load() ([]*config.KeyValue, error) {
 
 // Watch watches configuration changes
 func (s *NacosConfigSource) Watch() (config.Watcher, error) {
-	return NewNacosConfigWatcher(s.client, s.dataId, s.group, s.format), nil
+	watcher := NewNacosConfigWatcher(s.client, s.dataId, s.group, s.format)
+	if err := watcher.Start(context.Background()); err != nil {
+		return nil, err
+	}
+	return watcher, nil
 }
 
 // NacosConfigWatcher implements config.Watcher interface
@@ -188,7 +193,10 @@ func (w *NacosConfigWatcher) handleConfigChange(namespace, group, dataId, data s
 // Next returns the next configuration change event
 func (w *NacosConfigWatcher) Next() ([]*config.KeyValue, error) {
 	select {
-	case kvs := <-w.eventCh:
+	case kvs, ok := <-w.eventCh:
+		if !ok {
+			return nil, fmt.Errorf("watcher stopped")
+		}
 		return kvs, nil
 	case <-w.stopCh:
 		return nil, fmt.Errorf("watcher stopped")
@@ -324,6 +332,69 @@ func (p *PlugNacos) GetConfigSources() ([]config.Source, error) {
 	sources = append(sources, additionalSources...)
 
 	return sources, nil
+}
+
+// GetConfigWatchTargets returns the Nacos config entries that should feed the global config snapshot.
+func (p *PlugNacos) GetConfigWatchTargets(appName string) ([]lynx.ControlPlaneConfigTarget, error) {
+	if err := p.checkInitialized(); err != nil {
+		return nil, err
+	}
+
+	if appName == "" {
+		appName = currentLynxName()
+	}
+	if appName == "" {
+		appName = "application"
+	}
+
+	dataID := fmt.Sprintf("%s.yaml", appName)
+	group := conf.DefaultGroup
+	if p.conf.ServiceConfig != nil && p.conf.ServiceConfig.ServiceName != "" {
+		dataID = fmt.Sprintf("%s.yaml", p.conf.ServiceConfig.ServiceName)
+		if p.conf.ServiceConfig.Group != "" {
+			group = p.conf.ServiceConfig.Group
+		}
+	}
+
+	targets := []lynx.ControlPlaneConfigTarget{{
+		FileName: dataID,
+		Group:    group,
+	}}
+	for _, cfg := range p.conf.AdditionalConfigs {
+		group := cfg.Group
+		if group == "" {
+			group = conf.DefaultGroup
+		}
+		targets = append(targets, lynx.ControlPlaneConfigTarget{
+			FileName: cfg.DataId,
+			Group:    group,
+		})
+	}
+	return targets, nil
+}
+
+// WatchControlPlaneConfig opens a running watcher for a remote Nacos config target.
+func (p *PlugNacos) WatchControlPlaneConfig(ctx context.Context, target lynx.ControlPlaneConfigTarget) (config.Watcher, error) {
+	if err := p.checkInitialized(); err != nil {
+		return nil, err
+	}
+	if p.configClient == nil {
+		return nil, fmt.Errorf("nacos config client is nil")
+	}
+	group := target.Group
+	if group == "" {
+		group = conf.DefaultGroup
+	}
+	format := getFileExtension(target.FileName)
+	if format == "" {
+		format = "yaml"
+	}
+	watcher := NewNacosConfigWatcher(p.configClient, target.FileName, group, format)
+	if err := lynx.StartControlPlaneWatcher(ctx, watcher); err != nil {
+		_ = watcher.Stop()
+		return nil, err
+	}
+	return watcher, nil
 }
 
 // getMainConfigSource gets the main configuration source
