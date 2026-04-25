@@ -165,11 +165,18 @@ func (p *PlugNacos) checkHealthContext(ctx context.Context) error {
 		return err
 	}
 
+	var healthErr error
 	if p.metrics != nil {
 		p.metrics.RecordHealthCheck("nacos", "start")
+		succeeded := false
 		defer func() {
-			if p.metrics != nil && ctx.Err() == nil {
+			if succeeded && p.metrics != nil && ctx.Err() == nil {
 				p.metrics.RecordHealthCheck("nacos", "success")
+			}
+		}()
+		defer func() {
+			if healthErr == nil && ctx.Err() == nil {
+				succeeded = true
 			}
 		}()
 	}
@@ -178,7 +185,6 @@ func (p *PlugNacos) checkHealthContext(ctx context.Context) error {
 		return WrapInitError(fmt.Errorf("resilience components not initialized"), "health check")
 	}
 
-	var healthErr error
 	err := p.circuitBreaker.Do(func() error {
 		return p.retryManager.DoWithRetryContext(ctx, func() error {
 			if err := p.checkNacosConnectivityContext(ctx); err != nil {
@@ -257,6 +263,11 @@ func (p *PlugNacos) cleanupTasksContext(ctx context.Context) error {
 	p.configCache = make(map[string]interface{})
 	p.cacheMutex.Unlock()
 
+	if err := p.closeSDKClients(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	atomic.StoreInt32(&p.initialized, 0)
+
 	if err := ctx.Err(); err != nil {
 		errs = append(errs, fmt.Errorf("nacos cleanup cancelled: %w", err))
 	}
@@ -267,6 +278,36 @@ func (p *PlugNacos) cleanupTasksContext(ctx context.Context) error {
 
 	log.Infof("Nacos plugin cleaned up successfully")
 	return nil
+}
+
+func (p *PlugNacos) closeSDKClients(ctx context.Context) error {
+	var errs []error
+
+	if p.namingClient != nil {
+		namingClient := p.namingClient
+		if err := p.runWithContext(ctx, func() error {
+			namingClient.CloseClient()
+			return nil
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("close nacos naming client: %w", err))
+		} else {
+			p.namingClient = nil
+		}
+	}
+
+	if p.configClient != nil {
+		configClient := p.configClient
+		if err := p.runWithContext(ctx, func() error {
+			configClient.CloseClient()
+			return nil
+		}); err != nil {
+			errs = append(errs, fmt.Errorf("close nacos config client: %w", err))
+		} else {
+			p.configClient = nil
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func (p *PlugNacos) stopConfigWatcher(ctx context.Context, key string, watcher *ConfigWatcher) (err error) {

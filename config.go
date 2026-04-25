@@ -168,7 +168,6 @@ func (w *NacosConfigWatcher) handleConfigChange(namespace, group, dataId, data s
 		return
 	}
 
-	// Check if watcher is still running before sending to channel
 	if atomic.LoadInt32(&w.closed) == 1 {
 		return
 	}
@@ -179,12 +178,10 @@ func (w *NacosConfigWatcher) handleConfigChange(namespace, group, dataId, data s
 		Format: w.format,
 	}
 
-	// Send event (non-blocking, with closed channel check)
 	select {
-	case w.eventCh <- []*config.KeyValue{kv}:
 	case <-w.stopCh:
-		// Channel is closed, watcher is stopping
 		return
+	case w.eventCh <- []*config.KeyValue{kv}:
 	default:
 		log.Warnf("Config watcher event channel full, dropping event for dataId: %s", dataId)
 	}
@@ -192,6 +189,9 @@ func (w *NacosConfigWatcher) handleConfigChange(namespace, group, dataId, data s
 
 // Next returns the next configuration change event
 func (w *NacosConfigWatcher) Next() ([]*config.KeyValue, error) {
+	if atomic.LoadInt32(&w.closed) == 1 {
+		return nil, fmt.Errorf("watcher stopped")
+	}
 	select {
 	case kvs, ok := <-w.eventCh:
 		if !ok {
@@ -230,9 +230,7 @@ func (w *NacosConfigWatcher) Stop() error {
 			cancelErr = w.client.CancelListenConfig(param)
 		}
 
-		// Close channels safely
 		close(w.stopCh)
-		close(w.eventCh)
 	})
 
 	if cancelErr != nil {
@@ -502,6 +500,14 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 	if group == "" {
 		group = conf.DefaultGroup
 	}
+	watcherKey := fmt.Sprintf("%s:%s", dataId, group)
+
+	p.watcherMutex.RLock()
+	if _, exists := p.configWatchers[watcherKey]; exists {
+		p.watcherMutex.RUnlock()
+		return nil
+	}
+	p.watcherMutex.RUnlock()
 
 	// Create watcher
 	watcher := NewNacosConfigWatcher(p.configClient, dataId, group, "yaml")
@@ -513,8 +519,12 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 	}
 
 	// Store watcher
-	watcherKey := fmt.Sprintf("%s:%s", dataId, group)
 	p.watcherMutex.Lock()
+	if _, exists := p.configWatchers[watcherKey]; exists {
+		p.watcherMutex.Unlock()
+		_ = configWatcher.Stop()
+		return nil
+	}
 	p.configWatchers[watcherKey] = configWatcher
 	p.watcherMutex.Unlock()
 

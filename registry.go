@@ -46,6 +46,15 @@ func (r *NacosRegistrar) Register(ctx context.Context, service *registry.Service
 	if r.client == nil {
 		return fmt.Errorf("nacos naming client is nil")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if service == nil {
+		return fmt.Errorf("service instance is nil")
+	}
+	if service.Name == "" {
+		return fmt.Errorf("service name is required")
+	}
 
 	// Parse endpoint to get host and port
 	host, port, err := parseEndpoint(service.Endpoints)
@@ -85,6 +94,9 @@ func (r *NacosRegistrar) Register(ctx context.Context, service *registry.Service
 	if err != nil {
 		return WrapOperationError(err, "register instance")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !success {
 		return fmt.Errorf("failed to register instance: registration returned false")
 	}
@@ -105,6 +117,15 @@ func (r *NacosRegistrar) Register(ctx context.Context, service *registry.Service
 func (r *NacosRegistrar) Deregister(ctx context.Context, service *registry.ServiceInstance) error {
 	if r.client == nil {
 		return fmt.Errorf("nacos naming client is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if service == nil {
+		return fmt.Errorf("service instance is nil")
+	}
+	if service.Name == "" {
+		return fmt.Errorf("service name is required")
 	}
 
 	// Parse endpoint to get host and port
@@ -127,6 +148,9 @@ func (r *NacosRegistrar) Deregister(ctx context.Context, service *registry.Servi
 	success, err := r.client.DeregisterInstance(param)
 	if err != nil {
 		return WrapOperationError(err, "deregister instance")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if !success {
 		return fmt.Errorf("failed to deregister instance: deregistration returned false")
@@ -186,6 +210,9 @@ func parseEndpoint(endpoints []string) (string, int, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("invalid port in endpoint: %w", err)
 	}
+	if port <= 0 || port > 65535 {
+		return "", 0, fmt.Errorf("invalid port in endpoint: %d", port)
+	}
 
 	return host, port, nil
 }
@@ -216,6 +243,12 @@ func (d *NacosDiscovery) GetService(ctx context.Context, serviceName string) ([]
 	if d.client == nil {
 		return nil, fmt.Errorf("nacos naming client is nil")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if serviceName == "" {
+		return nil, fmt.Errorf("service name is required")
+	}
 
 	// Create subscribe param
 	param := vo.SelectInstancesParam{
@@ -229,6 +262,9 @@ func (d *NacosDiscovery) GetService(ctx context.Context, serviceName string) ([]
 	instances, err := d.client.SelectInstances(param)
 	if err != nil {
 		return nil, WrapOperationError(err, "get service instances")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Convert to registry.ServiceInstance
@@ -269,6 +305,12 @@ func (d *NacosDiscovery) Watch(ctx context.Context, serviceName string) (registr
 	if d.client == nil {
 		return nil, fmt.Errorf("nacos naming client is nil")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if serviceName == "" {
+		return nil, fmt.Errorf("service name is required")
+	}
 
 	// Check if watcher already exists
 	d.mu.RLock()
@@ -281,18 +323,19 @@ func (d *NacosDiscovery) Watch(ctx context.Context, serviceName string) (registr
 	// Create new watcher
 	watcher := NewServiceWatcher(d.client, serviceName, d.group, d.cluster)
 
-	// Store watcher
-	d.mu.Lock()
-	d.watchers[serviceName] = watcher
-	d.mu.Unlock()
-
 	// Start watching
 	if err := watcher.Start(ctx); err != nil {
-		d.mu.Lock()
-		delete(d.watchers, serviceName)
-		d.mu.Unlock()
 		return nil, fmt.Errorf("failed to start watcher: %w", err)
 	}
+
+	d.mu.Lock()
+	if existing, exists := d.watchers[serviceName]; exists && existing != watcher {
+		d.mu.Unlock()
+		_ = watcher.Stop()
+		return existing, nil
+	}
+	d.watchers[serviceName] = watcher
+	d.mu.Unlock()
 
 	return watcher, nil
 }
@@ -374,7 +417,6 @@ func (w *ServiceWatcher) handleServiceChange(services []model.Instance, err erro
 		return
 	}
 
-	// Check if watcher is still running before sending to channel
 	if atomic.LoadInt32(&w.closed) == 1 {
 		return
 	}
@@ -401,12 +443,10 @@ func (w *ServiceWatcher) handleServiceChange(services []model.Instance, err erro
 		serviceInstances = append(serviceInstances, serviceInstance)
 	}
 
-	// Send event (non-blocking, with closed channel check)
 	select {
-	case w.eventCh <- serviceInstances:
 	case <-w.stopCh:
-		// Channel is closed, watcher is stopping
 		return
+	case w.eventCh <- serviceInstances:
 	default:
 		log.Warnf("Service watcher event channel full, dropping event for %s", w.serviceName)
 	}
@@ -414,8 +454,14 @@ func (w *ServiceWatcher) handleServiceChange(services []model.Instance, err erro
 
 // Next returns the next service change event
 func (w *ServiceWatcher) Next() ([]*registry.ServiceInstance, error) {
+	if atomic.LoadInt32(&w.closed) == 1 {
+		return nil, fmt.Errorf("watcher stopped")
+	}
 	select {
-	case instances := <-w.eventCh:
+	case instances, ok := <-w.eventCh:
+		if !ok {
+			return nil, fmt.Errorf("watcher stopped")
+		}
 		return instances, nil
 	case <-w.stopCh:
 		return nil, fmt.Errorf("watcher stopped")
@@ -441,15 +487,16 @@ func (w *ServiceWatcher) Stop() error {
 
 		// Unsubscribe
 		param := &vo.SubscribeParam{
-			ServiceName: w.serviceName,
-			GroupName:   w.group,
-			Clusters:    []string{w.cluster},
+			ServiceName:       w.serviceName,
+			GroupName:         w.group,
+			Clusters:          []string{w.cluster},
+			SubscribeCallback: w.handleServiceChange,
 		}
-		_ = w.client.Unsubscribe(param)
+		if w.client != nil {
+			_ = w.client.Unsubscribe(param)
+		}
 
-		// Close channels safely
 		close(w.stopCh)
-		close(w.eventCh)
 	})
 
 	return nil
