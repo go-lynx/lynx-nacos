@@ -1,3 +1,7 @@
+// Package nacos provides a Nacos configuration-centre plugin for the Lynx framework.
+// It connects to a Nacos server, watches one or more configuration data-IDs for live
+// changes, and propagates updates to the Lynx runtime configuration layer.
+// Prometheus metrics track config-fetch latency, watch events, and error rates.
 package nacos
 
 import (
@@ -360,39 +364,6 @@ func (p *PlugNacos) CheckHealth() error {
 	ctx, cancel := p.cleanupContext()
 	defer cancel()
 	return p.checkHealthContext(ctx)
-}
-
-// checkNacosConnectivity verifies connectivity to Nacos server
-func (p *PlugNacos) checkNacosConnectivity() error {
-	if p.namingClient == nil && p.configClient == nil {
-		return fmt.Errorf("no Nacos client initialized (enable_register, enable_discovery, or enable_config required)")
-	}
-
-	if p.namingClient != nil {
-		// Test naming client with SelectInstances (service not found = connection OK)
-		param := vo.SelectInstancesParam{
-			ServiceName: "lynx-nacos-health-probe",
-			GroupName:   conf.DefaultGroup,
-		}
-		_, err := p.namingClient.SelectInstances(param)
-		if err != nil && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no instance") && !strings.Contains(err.Error(), "404") {
-			return fmt.Errorf("naming client connectivity check failed: %w", err)
-		}
-	}
-
-	if p.configClient != nil {
-		// Test config client with a non-existent config (config not found = connection OK)
-		param := vo.ConfigParam{
-			DataId: "lynx-nacos-health-probe",
-			Group:  conf.DefaultGroup,
-		}
-		_, err := p.configClient.GetConfig(param)
-		if err != nil && !strings.Contains(err.Error(), "config not found") && !strings.Contains(err.Error(), "404") {
-			return fmt.Errorf("config client connectivity check failed: %w", err)
-		}
-	}
-
-	return nil
 }
 
 // --- ControlPlane interface implementation ---
