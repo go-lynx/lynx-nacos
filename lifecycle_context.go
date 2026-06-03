@@ -259,8 +259,8 @@ func (p *PlugNacos) cleanupTasksContext(ctx context.Context) error {
 	p.watcherMutex.Unlock()
 
 	p.cacheMutex.Lock()
-	p.serviceCache = make(map[string]interface{})
-	p.configCache = make(map[string]interface{})
+	p.serviceCache = make(map[string]any)
+	p.configCache = make(map[string]any)
 	p.cacheMutex.Unlock()
 
 	if err := p.closeSDKClients(ctx); err != nil {
@@ -329,11 +329,21 @@ func (p *PlugNacos) stopConfigWatcher(ctx context.Context, key string, watcher *
 	})
 }
 
+// runWithContext runs a potentially-blocking operation in a dedicated goroutine
+// and returns as soon as either the operation finishes or ctx is cancelled.
+//
+// The goroutine is always buffered (done channel capacity 1), so it never leaks
+// memory: the goroutine will eventually write its result and exit even if the
+// caller has already returned due to context cancellation.  Callers must not
+// rely on the operation being cancelled; they should only use ctx to set an
+// upper bound on how long they are willing to wait.
 func (p *PlugNacos) runWithContext(ctx context.Context, operation func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
+	// Capacity-1 channel: the goroutine can always send without blocking,
+	// preventing a goroutine leak when ctx fires before the operation finishes.
 	done := make(chan error, 1)
 	go func() {
 		done <- operation()

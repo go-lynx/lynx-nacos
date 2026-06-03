@@ -84,7 +84,10 @@ func (s *NacosConfigSource) Load() ([]*config.KeyValue, error) {
 	return []*config.KeyValue{kv}, nil
 }
 
-// Watch watches configuration changes
+// Watch implements config.Source.Watch.  Because the Kratos interface does not
+// accept a context, the watcher uses context.Background() internally.  The
+// caller is responsible for calling watcher.Stop() when the source is no
+// longer needed.
 func (s *NacosConfigSource) Watch() (config.Watcher, error) {
 	watcher := NewNacosConfigWatcher(s.client, s.dataId, s.group, s.format)
 	if err := watcher.Start(context.Background()); err != nil {
@@ -239,16 +242,21 @@ func (w *NacosConfigWatcher) Stop() error {
 	return nil
 }
 
-// ConfigWatcher wraps NacosConfigWatcher with additional functionality
+// ConfigWatcher wraps NacosConfigWatcher with additional functionality.
+// Its lifecycle is tied to the provided parent context so that plugin
+// shutdown propagates to all active watchers.
 type ConfigWatcher struct {
 	watcher *NacosConfigWatcher
 	ctx     context.Context
 	cancel  context.CancelFunc
 }
 
-// NewConfigWatcher creates a new config watcher
-func NewConfigWatcher(watcher *NacosConfigWatcher) *ConfigWatcher {
-	ctx, cancel := context.WithCancel(context.Background())
+// NewConfigWatcher creates a new ConfigWatcher whose internal context is
+// derived from parentCtx.  When parentCtx is cancelled (e.g. on plugin
+// stop) the watcher is automatically stopped.  Pass context.Background()
+// only when no lifecycle context is available.
+func NewConfigWatcher(parentCtx context.Context, watcher *NacosConfigWatcher) *ConfigWatcher {
+	ctx, cancel := context.WithCancel(parentCtx)
 	return &ConfigWatcher{
 		watcher: watcher,
 		ctx:     ctx,
@@ -509,9 +517,11 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 	}
 	p.watcherMutex.RUnlock()
 
-	// Create watcher
+	// Create watcher. context.Background() is intentional here: WatchConfig is a
+	// user-facing API that does not receive a lifecycle context; the watcher is
+	// stopped explicitly via CleanupTasks when the plugin shuts down.
 	watcher := NewNacosConfigWatcher(p.configClient, dataId, group, "yaml")
-	configWatcher := NewConfigWatcher(watcher)
+	configWatcher := NewConfigWatcher(context.Background(), watcher)
 
 	// Start watcher
 	if err := configWatcher.Start(); err != nil {
@@ -528,8 +538,16 @@ func (p *PlugNacos) WatchConfig(dataId, group string, callback func(string)) err
 	p.configWatchers[watcherKey] = configWatcher
 	p.watcherMutex.Unlock()
 
-	// Start goroutine to handle events
+	// Start goroutine to handle events.
+	// A top-level panic recovery ensures that an unexpected panic inside
+	// watcher.Next() or the callback never silently kills the goroutine
+	// without a log entry.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Errorf("Unexpected panic in WatchConfig event loop for %s:%s: %v", dataId, group, r)
+			}
+		}()
 		for {
 			kvs, err := watcher.Next()
 			if err != nil {

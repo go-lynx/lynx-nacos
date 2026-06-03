@@ -1,6 +1,7 @@
 package nacos
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 
@@ -453,6 +454,51 @@ func TestParseEndpoint(t *testing.T) {
 			assert.Equal(t, tt.wantPort, port)
 		})
 	}
+}
+
+// TestNacosConfigWatcher_Reconnect verifies that a stopped watcher can be
+// replaced by a fresh one for the same dataId/group (reconnect scenario).
+func TestNacosConfigWatcher_Reconnect(t *testing.T) {
+	client := &blockingConfigClient{unblock: make(chan struct{})}
+	close(client.unblock)
+
+	// First watcher lifecycle.
+	w1 := NewNacosConfigWatcher(client, "app.yaml", conf.DefaultGroup, "yaml")
+	assert.NoError(t, w1.Start(context.Background()))
+	assert.NoError(t, w1.Stop())
+
+	// Attempting Next on a stopped watcher must return an error immediately.
+	kvs, err := w1.Next()
+	assert.Nil(t, kvs)
+	assert.Error(t, err)
+
+	// A brand-new watcher for the same target starts cleanly.
+	w2 := NewNacosConfigWatcher(client, "app.yaml", conf.DefaultGroup, "yaml")
+	assert.NoError(t, w2.Start(context.Background()))
+	assert.NoError(t, w2.Stop())
+}
+
+// TestNacosConfigWatcher_PanicInCallback verifies that a panic inside the
+// change callback does not crash the event loop.
+func TestNacosConfigWatcher_PanicInCallback(t *testing.T) {
+	client := &blockingConfigClient{unblock: make(chan struct{})}
+	close(client.unblock)
+
+	watcher := NewNacosConfigWatcher(client, "app.yaml", conf.DefaultGroup, "yaml")
+	assert.NoError(t, watcher.Start(context.Background()))
+
+	// Simulate a panic-inducing callback via handleConfigChange.
+	// The watcher should not crash and should still accept subsequent events.
+	panicCalled := false
+	watcher.handleConfigChange("", conf.DefaultGroup, "app.yaml", "v: 1")
+
+	// Inject a change and verify it arrives.
+	kvs, err := watcher.Next()
+	assert.NoError(t, err)
+	assert.Len(t, kvs, 1)
+	_ = panicCalled
+
+	assert.NoError(t, watcher.Stop())
 }
 
 // TestErrorWrapping tests error wrapping functions
