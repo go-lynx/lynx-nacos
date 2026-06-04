@@ -24,48 +24,50 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
-// Plugin metadata
 const (
 	pluginName        = "nacos.control.plane"
 	pluginVersion     = "v1.6.1"
 	pluginDescription = "nacos control plane plugin for lynx framework"
-	confPrefix        = "lynx.nacos"
+	// confPrefix is the config key prefix under which this plugin's settings are read.
+	confPrefix = "lynx.nacos"
 )
 
-// PlugNacos represents a Nacos control plane plugin instance
+// PlugNacos is the Nacos control plane plugin. It can act as a config center, a
+// service registry, and a discovery client depending on which features are
+// enabled in the config.
 type PlugNacos struct {
 	*plugins.BasePlugin
 	conf *conf.Nacos
 	rt   plugins.Runtime
 
-	// SDK clients
+	// namingClient backs registry/discovery; configClient backs config. Either
+	// may be nil when the corresponding feature is disabled.
 	namingClient naming_client.INamingClient
 	configClient config_client.IConfigClient
 
-	// Resilience components
 	metrics        *Metrics
 	retryManager   *RetryManager
 	circuitBreaker *CircuitBreaker
 
-	// State management
+	// initialized/destroyed are atomic so checkInitialized can be called from
+	// any goroutine without holding mu.
 	mu          sync.RWMutex
 	initialized int32
 	destroyed   int32
 
-	// Service information
 	serviceInfo *ServiceInfo
 
-	// Configuration watchers
+	// configWatchers is keyed by "dataId:group"; guarded by watcherMutex.
 	configWatchers map[string]*ConfigWatcher
 	watcherMutex   sync.RWMutex
 
-	// Cache system
+	// serviceCache/configCache are guarded by cacheMutex.
 	serviceCache map[string]any
 	configCache  map[string]any
 	cacheMutex   sync.RWMutex
 }
 
-// ServiceInfo service registration information
+// ServiceInfo holds the identity used when registering this service instance.
 type ServiceInfo struct {
 	Service   string
 	Namespace string
@@ -85,7 +87,9 @@ func NewNacosControlPlane() *PlugNacos {
 			pluginDescription,
 			pluginVersion,
 			confPrefix,
-			math.MaxInt, // High priority
+			// Max weight: the control plane must load before plugins that
+			// depend on it for config/discovery.
+			math.MaxInt,
 		),
 		configWatchers: make(map[string]*ConfigWatcher),
 		serviceCache:   make(map[string]any),
