@@ -97,37 +97,31 @@ func NewNacosControlPlane() *PlugNacos {
 	}
 }
 
-// InitializeResources implements custom initialization logic for the Nacos plugin
+// InitializeResources scans the "lynx.nacos" config subtree, applies defaults,
+// validates it, and connects the Nacos SDK clients.
 func (p *PlugNacos) InitializeResources(rt plugins.Runtime) error {
 	p.rt = rt
-	// Initialize an empty configuration structure
 	p.conf = &conf.Nacos{}
 
-	// Scan and load Nacos configuration from runtime configuration
 	err := rt.GetConfig().Value(confPrefix).Scan(p.conf)
 	if err != nil {
 		return WrapInitError(err, "failed to scan nacos configuration")
 	}
 
-	// Set default configuration
 	p.setDefaultConfig()
 
-	// Validate configuration
 	if err := p.validateConfig(); err != nil {
 		return WrapInitError(err, "configuration validation failed")
 	}
 
-	// Initialize resilience components (metrics, retry, circuit breaker)
 	if err := p.initComponents(); err != nil {
 		return WrapInitError(err, "failed to initialize components")
 	}
 
-	// Initialize SDK clients
 	if err := p.initSDKClients(); err != nil {
 		return WrapInitError(err, "failed to initialize SDK clients")
 	}
 
-	// Mark as initialized
 	atomic.StoreInt32(&p.initialized, 1)
 
 	log.Infof("Nacos plugin initialized successfully - Server: %s, Namespace: %s",
@@ -136,7 +130,7 @@ func (p *PlugNacos) InitializeResources(rt plugins.Runtime) error {
 	return nil
 }
 
-// initComponents initializes resilience components (metrics, retry, circuit breaker)
+// initComponents sets up metrics, retry manager, and circuit breaker.
 func (p *PlugNacos) initComponents() error {
 	p.metrics = NewNacosMetrics()
 	p.retryManager = NewRetryManager(3, conf.DefaultRetryInterval)
@@ -146,15 +140,12 @@ func (p *PlugNacos) initComponents() error {
 	return nil
 }
 
-// initSDKClients initializes Nacos SDK clients
+// initSDKClients creates the naming and config Nacos clients based on which
+// features are enabled (register/discovery → naming, config → configClient).
 func (p *PlugNacos) initSDKClients() error {
-	// Build server configs
 	serverConfigs := p.buildServerConfigs()
-
-	// Build client config
 	clientConfig := p.buildClientConfig()
 
-	// Initialize naming client if service registration or discovery is enabled
 	if p.conf.EnableRegister || p.conf.EnableDiscovery {
 		namingClient, err := clients.NewNamingClient(
 			vo.NacosClientParam{
@@ -169,7 +160,6 @@ func (p *PlugNacos) initSDKClients() error {
 		log.Infof("Nacos naming client initialized")
 	}
 
-	// Initialize config client if configuration management is enabled
 	if p.conf.EnableConfig {
 		configClient, err := clients.NewConfigClient(
 			vo.NacosClientParam{
@@ -187,7 +177,7 @@ func (p *PlugNacos) initSDKClients() error {
 	return nil
 }
 
-// buildServerConfigs builds server configurations
+// buildServerConfigs converts the configured address list to Nacos SDK ServerConfig entries.
 func (p *PlugNacos) buildServerConfigs() []constant.ServerConfig {
 	// When Endpoint is set and ServerAddresses empty, SDK discovers via clientConfig.Endpoint
 	addresses := normalizeServerAddresses(p.conf.ServerAddresses)
@@ -199,11 +189,10 @@ func (p *PlugNacos) buildServerConfigs() []constant.ServerConfig {
 	for _, addr := range addresses {
 		serverConfig := constant.ServerConfig{
 			IpAddr:      addr,
-			Port:        8848, // Default Nacos port
+			Port:        8848,
 			ContextPath: p.conf.ContextPath,
 		}
 
-		// Parse address if it contains port
 		if host, port, err := parseAddress(addr); err == nil {
 			serverConfig.IpAddr = host
 			serverConfig.Port = port
@@ -215,7 +204,7 @@ func (p *PlugNacos) buildServerConfigs() []constant.ServerConfig {
 	return serverConfigs
 }
 
-// buildClientConfig builds client configuration
+// buildClientConfig constructs the Nacos SDK ClientConfig from plugin settings.
 func (p *PlugNacos) buildClientConfig() *constant.ClientConfig {
 	clientConfig := constant.NewClientConfig(
 		constant.WithNamespaceId(p.getNamespaceID()),
@@ -226,7 +215,6 @@ func (p *PlugNacos) buildClientConfig() *constant.ClientConfig {
 		constant.WithLogLevel(p.conf.LogLevel),
 	)
 
-	// Set authentication if provided
 	if p.conf.Username != "" && p.conf.Password != "" {
 		clientConfig.Username = p.conf.Username
 		clientConfig.Password = p.conf.Password
@@ -235,12 +223,10 @@ func (p *PlugNacos) buildClientConfig() *constant.ClientConfig {
 		clientConfig.SecretKey = p.conf.SecretKey
 	}
 
-	// Set endpoint if provided
 	if p.conf.Endpoint != "" {
 		clientConfig.Endpoint = p.conf.Endpoint
 	}
 
-	// Set region ID if provided
 	if p.conf.RegionId != "" {
 		clientConfig.RegionId = p.conf.RegionId
 	}
@@ -269,9 +255,9 @@ func (p *PlugNacos) getNamespace() string {
 	return conf.DefaultNamespace
 }
 
-// parseAddress parses address string to host and port
+// parseAddress splits an "host:port" string into its components.
+// Returns the input address and default port 8848 on any parse failure.
 func parseAddress(addr string) (string, uint64, error) {
-	// Simple parsing, can be enhanced
 	parts := splitAddress(addr)
 	if len(parts) != 2 {
 		return addr, 8848, nil // Default port
@@ -289,23 +275,20 @@ func parseAddress(addr string) (string, uint64, error) {
 	return host, port, nil
 }
 
-// splitAddress splits address by colon
+// splitAddress splits an address on the last colon, handling IPv6 brackets.
 func splitAddress(addr string) []string {
-	// Handle IPv6 addresses
 	if strings.Contains(addr, "[") {
-		// IPv6 format: [::1]:8848
+		// IPv6: [::1]:8848
 		idx := strings.LastIndex(addr, ":")
 		if idx > 0 {
 			return []string{addr[:idx], addr[idx+1:]}
 		}
 		return []string{addr}
 	}
-
-	// IPv4 format: 127.0.0.1:8848
 	return strings.SplitN(addr, ":", 2)
 }
 
-// checkInitialized checks if plugin is initialized
+// checkInitialized returns an error if the plugin has not been initialized or has been destroyed.
 func (p *PlugNacos) checkInitialized() error {
 	if atomic.LoadInt32(&p.initialized) == 0 {
 		return ErrNotInitialized
@@ -316,7 +299,7 @@ func (p *PlugNacos) checkInitialized() error {
 	return nil
 }
 
-// StartupTasks implements plugin startup interface
+// StartupTasks connects to the Nacos server and starts the configured watchers.
 func (p *PlugNacos) StartupTasks() error {
 	ctx, cancel := p.cleanupContext()
 	defer cancel()
@@ -363,7 +346,7 @@ func (p *PlugNacos) publishRuntimeResources() error {
 	return nil
 }
 
-// CheckHealth implements plugin health check interface
+// CheckHealth verifies the Nacos connection is responsive.
 func (p *PlugNacos) CheckHealth() error {
 	ctx, cancel := p.cleanupContext()
 	defer cancel()
@@ -372,7 +355,7 @@ func (p *PlugNacos) CheckHealth() error {
 
 // --- ControlPlane interface implementation ---
 
-// GetNamespace returns the Nacos namespace
+// GetNamespace returns the configured Nacos namespace.
 func (p *PlugNacos) GetNamespace() string {
 	return p.getNamespace()
 }
@@ -392,29 +375,29 @@ func (p *PlugNacos) ControlPlaneCapabilities() []lynx.ControlPlaneCapability {
 	return capabilities
 }
 
-// HTTPRateLimit returns HTTP rate limit middleware (Nacos does not have built-in rate limiting)
+// HTTPRateLimit returns nil — Nacos does not provide HTTP rate limiting.
 func (p *PlugNacos) HTTPRateLimit() middleware.Middleware {
 	return nil
 }
 
-// GRPCRateLimit returns gRPC rate limit middleware (Nacos does not have built-in rate limiting)
+// GRPCRateLimit returns nil — Nacos does not provide gRPC rate limiting.
 func (p *PlugNacos) GRPCRateLimit() middleware.Middleware {
 	return nil
 }
 
-// NewNodeRouter creates a node filter for service routing (returns nil, use discovery for instance selection)
+// NewNodeRouter returns nil — use the discovery client directly for instance selection.
 func (p *PlugNacos) NewNodeRouter(serviceName string) selector.NodeFilter {
 	return nil
 }
 
-// CleanupTasks implements plugin cleanup interface
+// CleanupTasks deregisters the service instance and closes Nacos clients.
 func (p *PlugNacos) CleanupTasks() error {
 	ctx, cancel := p.cleanupContext()
 	defer cancel()
 	return p.cleanupTasksContext(ctx)
 }
 
-// Configure updates the plugin configuration
+// Configure validates and applies the new Nacos config, rolling back on error.
 func (p *PlugNacos) Configure(c any) error {
 	if c == nil {
 		return fmt.Errorf("configuration cannot be nil")
@@ -425,14 +408,10 @@ func (p *PlugNacos) Configure(c any) error {
 		return fmt.Errorf("invalid configuration type: expected *conf.Nacos, got %T", c)
 	}
 
-	// Save old configuration for rollback
 	oldConf := p.conf
 	p.conf = nacosConf
-
-	// Validate new configuration
 	p.setDefaultConfig()
 	if err := p.validateConfig(); err != nil {
-		// Rollback
 		p.conf = oldConf
 		return fmt.Errorf("nacos configuration validation failed: %w", err)
 	}

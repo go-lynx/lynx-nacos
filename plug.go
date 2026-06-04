@@ -5,17 +5,9 @@ import (
 	"github.com/go-lynx/lynx/plugins"
 )
 
-// init is executed automatically when the package is imported.
-// It registers the Nacos plugin into the global plugin factory so the plugin
-// manager can discover and load it.
+// init registers the Nacos plugin with the global factory on import.
 func init() {
-	// Register the Nacos control-plane plugin to the global plugin factory.
-	// The first parameter is the plugin name; the second parameter confPrefix is used to read
-	// plugin-related settings from configuration files.
-	// The last parameter is a constructor function returning an instance that
-	// implements plugins.Plugin.
 	factory.GlobalTypedFactory().RegisterPlugin(pluginName, confPrefix, func() plugins.Plugin {
-		// Create and return a new Nacos control-plane plugin instance
 		return NewNacosControlPlane()
 	})
 }
