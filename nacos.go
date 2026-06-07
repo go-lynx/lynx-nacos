@@ -26,7 +26,7 @@ import (
 
 const (
 	pluginName        = "nacos.control.plane"
-	pluginVersion     = "v1.6.1"
+	pluginVersion     = "v1.6.3"
 	pluginDescription = "nacos control plane plugin for lynx framework"
 	// confPrefix is the config key prefix under which this plugin's settings are read.
 	confPrefix = "lynx.nacos"
