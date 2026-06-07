@@ -6,7 +6,7 @@ toolchain go1.26.2
 
 require (
 	github.com/go-kratos/kratos/v2 v2.9.2
-	github.com/go-lynx/lynx v1.6.2
+	github.com/go-lynx/lynx v1.6.3
 	github.com/nacos-group/nacos-sdk-go/v2 v2.3.5
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
