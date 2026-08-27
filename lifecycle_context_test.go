@@ -2,15 +2,19 @@ package nacos
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-kratos/kratos/v2/config"
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/plugins"
 	"github.com/nacos-group/nacos-sdk-go/v2/model"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type blockingConfigClient struct {
@@ -47,6 +51,7 @@ func TestPlugNacos_StartContext_UsesCallerContextOnConnectivityFailure(t *testin
 
 	client := &blockingConfigClient{unblock: make(chan struct{})}
 	plugin.configClient = client
+	attachTestRuntime(t, plugin)
 	atomic.StoreInt32(&plugin.initialized, 1)
 	plugin.SetStatus(plugins.StatusInactive)
 
@@ -58,10 +63,52 @@ func TestPlugNacos_StartContext_UsesCallerContextOnConnectivityFailure(t *testin
 	close(client.unblock)
 
 	if assert.Error(t, err) {
-		assert.Contains(t, err.Error(), "context deadline exceeded")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	}
 	assert.Less(t, time.Since(start), time.Second)
 	assert.Equal(t, plugins.StatusFailed, plugin.Status(plugin))
+}
+
+// attachTestRuntime binds a runtime to the plugin without connecting to Nacos:
+// the core base records the runtime before running InitializeResources, and an
+// empty lynx.nacos section fails validation before any SDK client is created.
+func attachTestRuntime(t *testing.T, plugin *PlugNacos) {
+	t.Helper()
+	cfg := config.New(config.WithSource(&memorySource{kv: &config.KeyValue{
+		Key:    t.Name() + ".yaml",
+		Format: "yaml",
+		Value:  []byte("lynx:\n  nacos: {}\n"),
+	}}))
+	require.NoError(t, cfg.Load())
+	t.Cleanup(func() { _ = cfg.Close() })
+
+	rt := plugins.NewUnifiedRuntime()
+	rt.SetConfig(cfg)
+	err := plugin.BasePlugin.Initialize(plugin, rt)
+	require.Error(t, err, "empty nacos config must fail validation before SDK clients are created")
+	require.Contains(t, err.Error(), "server_addresses or endpoint must be configured")
+}
+
+type memorySource struct{ kv *config.KeyValue }
+
+func (s *memorySource) Load() ([]*config.KeyValue, error) { return []*config.KeyValue{s.kv}, nil }
+func (s *memorySource) Watch() (config.Watcher, error) {
+	return &memoryWatcher{stop: make(chan struct{})}, nil
+}
+
+type memoryWatcher struct {
+	stop chan struct{}
+	once sync.Once
+}
+
+func (w *memoryWatcher) Next() ([]*config.KeyValue, error) {
+	<-w.stop
+	return nil, errors.New("watcher stopped")
+}
+
+func (w *memoryWatcher) Stop() error {
+	w.once.Do(func() { close(w.stop) })
+	return nil
 }
 
 func TestPlugNacos_CleanupTasks_ClosesConfigClientAndResetsInitialized(t *testing.T) {

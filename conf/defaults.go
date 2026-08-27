@@ -24,6 +24,11 @@ const (
 	DefaultRetryInterval                 = 1 * time.Second
 	DefaultCircuitBreakerThreshold       = 0.5
 	DefaultCircuitBreakerHalfOpenTimeout = 30 * time.Second
+	// DefaultCircuitBreakerMinRequests is the minimum number of requests observed in the
+	// current window before the failure ratio is evaluated.
+	DefaultCircuitBreakerMinRequests = 5
+	// DefaultCircuitBreakerWindow is the rolling window over which the failure ratio is computed.
+	DefaultCircuitBreakerWindow = time.Minute
 )
 
 // GetDefaultTimeout returns default timeout duration

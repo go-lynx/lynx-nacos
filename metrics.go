@@ -1,9 +1,14 @@
 package nacos
 
 import (
+	"errors"
+	"fmt"
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
+
+var metricsRegistrationMu sync.Mutex
 
 // Metrics defines Nacos-related Prometheus metrics
 type Metrics struct {
@@ -15,10 +20,15 @@ type Metrics struct {
 	configOperationsTotal *prometheus.CounterVec
 }
 
-// NewNacosMetrics creates a new metrics instance
+// NewNacosMetrics creates a new metrics instance. Collectors are registered
+// against the default registerer once and reused on subsequent calls, so
+// re-initializing the plugin (restart) does not panic on duplicate registration.
 func NewNacosMetrics() *Metrics {
+	metricsRegistrationMu.Lock()
+	defer metricsRegistrationMu.Unlock()
+
 	return &Metrics{
-		sdkOperationsTotal: promauto.NewCounterVec(
+		sdkOperationsTotal: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -27,7 +37,7 @@ func NewNacosMetrics() *Metrics {
 			},
 			[]string{"operation", "status"},
 		),
-		sdkErrorsTotal: promauto.NewCounterVec(
+		sdkErrorsTotal: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -36,7 +46,7 @@ func NewNacosMetrics() *Metrics {
 			},
 			[]string{"operation", "error_type"},
 		),
-		healthCheckTotal: promauto.NewCounterVec(
+		healthCheckTotal: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -45,7 +55,7 @@ func NewNacosMetrics() *Metrics {
 			},
 			[]string{"component", "status"},
 		),
-		healthCheckFailed: promauto.NewCounterVec(
+		healthCheckFailed: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -54,7 +64,7 @@ func NewNacosMetrics() *Metrics {
 			},
 			[]string{"component", "error_type"},
 		),
-		serviceDiscoveryTotal: promauto.NewCounterVec(
+		serviceDiscoveryTotal: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -63,7 +73,7 @@ func NewNacosMetrics() *Metrics {
 			},
 			[]string{"service", "status"},
 		),
-		configOperationsTotal: promauto.NewCounterVec(
+		configOperationsTotal: registerCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "lynx",
 				Subsystem: "nacos",
@@ -103,4 +113,22 @@ func (m *Metrics) RecordServiceDiscovery(service, status string) {
 // RecordConfigOperation records a config operation
 func (m *Metrics) RecordConfigOperation(operation, dataId, status string) {
 	m.configOperationsTotal.WithLabelValues(operation, dataId, status).Inc()
+}
+
+// registerCounterVec registers a CounterVec with the default registerer, or
+// returns the already-registered collector when one with the same descriptor exists.
+func registerCounterVec(opts prometheus.CounterOpts, labelNames []string) *prometheus.CounterVec {
+	collector := prometheus.NewCounterVec(opts, labelNames)
+	if err := prometheus.DefaultRegisterer.Register(collector); err != nil {
+		var alreadyRegistered prometheus.AlreadyRegisteredError
+		if errors.As(err, &alreadyRegistered) {
+			existing, ok := alreadyRegistered.ExistingCollector.(*prometheus.CounterVec)
+			if !ok {
+				panic(fmt.Sprintf("unexpected counter collector type for %s_%s_%s", opts.Namespace, opts.Subsystem, opts.Name))
+			}
+			return existing
+		}
+		panic(fmt.Sprintf("failed to register counter collector %s_%s_%s: %v", opts.Namespace, opts.Subsystem, opts.Name, err))
+	}
+	return collector
 }

@@ -122,6 +122,9 @@ func (p *PlugNacos) InitializeResources(rt plugins.Runtime) error {
 		return WrapInitError(err, "failed to initialize SDK clients")
 	}
 
+	// A previous Stop marks the plugin destroyed; a successful re-initialize
+	// must clear that flag so the plugin can be restarted.
+	atomic.StoreInt32(&p.destroyed, 0)
 	atomic.StoreInt32(&p.initialized, 1)
 
 	log.Infof("Nacos plugin initialized successfully - Server: %s, Namespace: %s",

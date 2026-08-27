@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-lynx/lynx-nacos/conf"
 	"github.com/go-lynx/lynx/log"
-	"github.com/go-lynx/lynx/plugins"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
@@ -18,81 +17,16 @@ func (p *PlugNacos) IsContextAware() bool {
 	return true
 }
 
-func (p *PlugNacos) InitializeContext(ctx context.Context, plugin plugins.Plugin, rt plugins.Runtime) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("initialize canceled before start: %w", err)
-	}
-	return p.BasePlugin.Initialize(plugin, rt)
+// StartupTasksContext is the context-aware startup hook. The core BasePlugin
+// drives the lifecycle state machine (status transitions, events, health check)
+// and passes the caller's context straight through so cancellation is real.
+func (p *PlugNacos) StartupTasksContext(ctx context.Context) error {
+	return p.startupTasksContext(ctx)
 }
 
-func (p *PlugNacos) StartContext(ctx context.Context, plugin plugins.Plugin) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("start canceled before execution: %w", err)
-	}
-	if p.Status(plugin) == plugins.StatusActive {
-		return plugins.ErrPluginAlreadyActive
-	}
-
-	p.SetStatus(plugins.StatusInitializing)
-	p.EmitEvent(plugins.PluginEvent{
-		Type:     plugins.EventPluginStarting,
-		Priority: plugins.PriorityNormal,
-		Source:   "StartContext",
-		Category: "lifecycle",
-	})
-
-	if err := p.startupTasksContext(ctx); err != nil {
-		p.SetStatus(plugins.StatusFailed)
-		return plugins.NewPluginError(p.ID(), "Start", "Failed to perform startup tasks", err)
-	}
-
-	if err := p.checkHealthContext(ctx); err != nil {
-		p.SetStatus(plugins.StatusFailed)
-		log.Errorf("Plugin %s health check failed: %v", plugin.Name(), err)
-		return fmt.Errorf("plugin %s health check failed: %w", plugin.Name(), err)
-	}
-
-	p.SetStatus(plugins.StatusActive)
-	p.EmitEvent(plugins.PluginEvent{
-		Type:     plugins.EventPluginStarted,
-		Priority: plugins.PriorityNormal,
-		Source:   "StartContext",
-		Category: "lifecycle",
-	})
-
-	return nil
-}
-
-func (p *PlugNacos) StopContext(ctx context.Context, plugin plugins.Plugin) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("stop canceled before execution: %w", err)
-	}
-	if p.Status(plugin) != plugins.StatusActive {
-		return plugins.NewPluginError(p.ID(), "Stop", "Plugin must be active to stop", plugins.ErrPluginNotActive)
-	}
-
-	p.SetStatus(plugins.StatusStopping)
-	p.EmitEvent(plugins.PluginEvent{
-		Type:     plugins.EventPluginStopping,
-		Priority: plugins.PriorityNormal,
-		Source:   "StopContext",
-		Category: "lifecycle",
-	})
-
-	if err := p.cleanupTasksContext(ctx); err != nil {
-		p.SetStatus(plugins.StatusFailed)
-		return plugins.NewPluginError(p.ID(), "Stop", "Failed to perform cleanup tasks", err)
-	}
-
-	p.SetStatus(plugins.StatusTerminated)
-	p.EmitEvent(plugins.PluginEvent{
-		Type:     plugins.EventPluginStopped,
-		Priority: plugins.PriorityNormal,
-		Source:   "StopContext",
-		Category: "lifecycle",
-	})
-
-	return nil
+// CleanupTasksContext is the context-aware cleanup hook driven by the core BasePlugin.
+func (p *PlugNacos) CleanupTasksContext(ctx context.Context) error {
+	return p.cleanupTasksContext(ctx)
 }
 
 func (p *PlugNacos) startupTasksContext(ctx context.Context) (startErr error) {
@@ -221,7 +155,7 @@ func (p *PlugNacos) checkNacosConnectivityContext(ctx context.Context) error {
 			_, err := p.namingClient.SelectInstances(param)
 			return err
 		})
-		if err != nil && !stringsContainsAny(err.Error(), "not found", "no instance", "404") {
+		if err != nil && !isBenignNamingProbeError(err) {
 			return fmt.Errorf("naming client connectivity check failed: %w", err)
 		}
 	}
@@ -372,6 +306,27 @@ func stringsContainsAny(value string, substrings ...string) bool {
 		}
 	}
 	return false
+}
+
+// benignNamingProbeErrors lists (lower-cased) fragments of errors the naming
+// client returns when the server is reachable but the probe service simply has
+// no instances. nacos-sdk-go reports "instance list is empty!" for an unknown
+// service, so an empty result must be treated as healthy.
+var benignNamingProbeErrors = []string{
+	"instance list is empty",
+	"not found",
+	"no instance",
+	"404",
+}
+
+// isBenignNamingProbeError reports whether a SelectInstances error means "server
+// reachable, no instances" rather than a genuine connectivity failure. Matching
+// is case-insensitive.
+func isBenignNamingProbeError(err error) bool {
+	if err == nil {
+		return true
+	}
+	return stringsContainsAny(strings.ToLower(err.Error()), benignNamingProbeErrors...)
 }
 
 func voSelectInstancesParam() vo.SelectInstancesParam {

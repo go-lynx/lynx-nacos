@@ -81,7 +81,7 @@ func (m *mockNamingClient) Unsubscribe(param *vo.SubscribeParam) (err error) {
 	return nil
 }
 
-func (m *mockNamingClient) CloseClient()     {}
+func (m *mockNamingClient) CloseClient()        {}
 func (m *mockNamingClient) ServerHealthy() bool { return true }
 
 // ---- NacosRegistrar tests ----

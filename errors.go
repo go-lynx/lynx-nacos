@@ -6,9 +6,9 @@ import (
 
 // Error types for Nacos plugin
 var (
-	ErrNotInitialized = fmt.Errorf("nacos plugin not initialized")
-	ErrSDKInitFailed  = fmt.Errorf("failed to initialize nacos SDK")
-	ErrConfigInvalid  = fmt.Errorf("invalid nacos configuration")
+	ErrNotInitialized  = fmt.Errorf("nacos plugin not initialized")
+	ErrSDKInitFailed   = fmt.Errorf("failed to initialize nacos SDK")
+	ErrConfigInvalid   = fmt.Errorf("invalid nacos configuration")
 	ErrServiceNotFound = fmt.Errorf("service not found")
 	ErrConfigNotFound  = fmt.Errorf("configuration not found")
 )
@@ -28,4 +28,3 @@ func WrapOperationError(err error, operation string) error {
 	}
 	return fmt.Errorf("nacos %s failed: %w", operation, err)
 }
-

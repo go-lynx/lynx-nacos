@@ -61,6 +61,13 @@ func (c *successConfigClient) CloseClient() { atomic.StoreInt32(&c.closed, 1) }
 func TestNewNacosMetrics(t *testing.T) {
 	m := NewNacosMetrics()
 	require.NotNil(t, m)
+	// A second construction (plugin restart) must reuse the registered
+	// collectors instead of panicking on duplicate registration.
+	require.NotPanics(t, func() {
+		again := NewNacosMetrics()
+		require.NotNil(t, again)
+		assert.Same(t, m.sdkOperationsTotal, again.sdkOperationsTotal)
+	})
 	// Calling each recording method should not panic.
 	m.RecordSDKOperation("test_op", "start")
 	m.RecordSDKOperation("test_op", "success")
@@ -590,18 +597,59 @@ func TestCircuitBreaker_Do_Success(t *testing.T) {
 	assert.Equal(t, CircuitStateClosed, cb.state)
 }
 
+// tripBreaker drives the breaker past its minimum request threshold with a
+// 50% failure rate so that it opens (threshold 0.5, minRequests 5 by default).
+func tripBreaker(cb *CircuitBreaker) {
+	for i := 0; i < cb.minRequests; i++ {
+		if i%2 == 0 {
+			cb.Do(func() error { return errors.New("fail") })
+		} else {
+			cb.Do(func() error { return nil })
+		}
+	}
+}
+
 func TestCircuitBreaker_Do_Failure_OpensCircuit(t *testing.T) {
 	cb := NewCircuitBreaker(0.5, conf.DefaultCircuitBreakerHalfOpenTimeout)
-	// One success, one failure -> 50% failure rate => open.
-	cb.Do(func() error { return nil })
+	tripBreaker(cb)
+	assert.Equal(t, CircuitStateOpen, cb.state)
+}
+
+func TestCircuitBreaker_FirstFailureDoesNotOpen(t *testing.T) {
+	cb := NewCircuitBreaker(0.5, conf.DefaultCircuitBreakerHalfOpenTimeout)
+	// A single failure is a 100% failure ratio but is below the minimum request
+	// threshold, so the breaker must stay closed and keep admitting calls.
+	cb.Do(func() error { return errors.New("fail") })
+	assert.Equal(t, CircuitStateClosed, cb.state)
+
+	for i := 0; i < cb.minRequests-2; i++ {
+		cb.Do(func() error { return errors.New("fail") })
+		assert.Equal(t, CircuitStateClosed, cb.state, "below min requests the breaker must stay closed")
+	}
+	// The request that reaches minRequests with a failure ratio >= threshold opens it.
 	cb.Do(func() error { return errors.New("fail") })
 	assert.Equal(t, CircuitStateOpen, cb.state)
+	assert.Error(t, cb.Do(func() error { return nil }))
+}
+
+func TestCircuitBreaker_RollingWindowResetsCounters(t *testing.T) {
+	cb := NewCircuitBreaker(0.5, conf.DefaultCircuitBreakerHalfOpenTimeout)
+	cb.window = time.Millisecond
+	for i := 0; i < cb.minRequests-1; i++ {
+		cb.Do(func() error { return errors.New("fail") })
+	}
+	assert.Equal(t, CircuitStateClosed, cb.state)
+
+	time.Sleep(5 * time.Millisecond)
+	// Old failures fall out of the window; one more failure is again below minRequests.
+	cb.Do(func() error { return errors.New("fail") })
+	assert.Equal(t, CircuitStateClosed, cb.state)
+	assert.Equal(t, 1, cb.failureCount)
 }
 
 func TestCircuitBreaker_Do_OpenReturnsError(t *testing.T) {
 	cb := NewCircuitBreaker(0.5, conf.DefaultCircuitBreakerHalfOpenTimeout)
-	cb.Do(func() error { return nil })
-	cb.Do(func() error { return errors.New("fail") })
+	tripBreaker(cb)
 	// Circuit is open.
 	err := cb.Do(func() error { return nil })
 	assert.Error(t, err)
@@ -610,8 +658,7 @@ func TestCircuitBreaker_Do_OpenReturnsError(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpen_SuccessCloses(t *testing.T) {
 	cb := NewCircuitBreaker(0.5, 1*time.Millisecond)
-	cb.Do(func() error { return nil })
-	cb.Do(func() error { return errors.New("fail") })
+	tripBreaker(cb)
 	assert.Equal(t, CircuitStateOpen, cb.state)
 
 	time.Sleep(5 * time.Millisecond)
@@ -623,8 +670,7 @@ func TestCircuitBreaker_HalfOpen_SuccessCloses(t *testing.T) {
 
 func TestCircuitBreaker_HalfOpen_FailureReopens(t *testing.T) {
 	cb := NewCircuitBreaker(0.5, 1*time.Millisecond)
-	cb.Do(func() error { return nil })
-	cb.Do(func() error { return errors.New("fail") })
+	tripBreaker(cb)
 
 	time.Sleep(5 * time.Millisecond)
 
@@ -803,11 +849,11 @@ type slowCloseClient struct {
 	unblock chan struct{}
 }
 
-func (c *slowCloseClient) GetConfig(vo.ConfigParam) (string, error)           { return "", nil }
-func (c *slowCloseClient) PublishConfig(vo.ConfigParam) (bool, error)         { return false, nil }
-func (c *slowCloseClient) DeleteConfig(vo.ConfigParam) (bool, error)          { return false, nil }
-func (c *slowCloseClient) ListenConfig(vo.ConfigParam) error                  { return nil }
-func (c *slowCloseClient) CancelListenConfig(vo.ConfigParam) error            { return nil }
+func (c *slowCloseClient) GetConfig(vo.ConfigParam) (string, error)   { return "", nil }
+func (c *slowCloseClient) PublishConfig(vo.ConfigParam) (bool, error) { return false, nil }
+func (c *slowCloseClient) DeleteConfig(vo.ConfigParam) (bool, error)  { return false, nil }
+func (c *slowCloseClient) ListenConfig(vo.ConfigParam) error          { return nil }
+func (c *slowCloseClient) CancelListenConfig(vo.ConfigParam) error    { return nil }
 func (c *slowCloseClient) SearchConfig(vo.SearchConfigParam) (*model.ConfigPage, error) {
 	return nil, nil
 }

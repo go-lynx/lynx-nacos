@@ -98,11 +98,19 @@ func (r *RetryManager) calculateBackoff(attempt int) time.Duration {
 type CircuitBreaker struct {
 	threshold       float64
 	halfOpenTimeout time.Duration
-	failureCount    int
-	successCount    int
-	lastFailure     time.Time
-	state           CircuitState
-	mu              chan struct{}
+	// minRequests is the minimum number of requests that must be observed in
+	// the current window before the failure ratio is evaluated. Without it a
+	// single failure right after start would open the breaker.
+	minRequests int
+	// window bounds the counters: once it elapses the counters are reset so
+	// the failure ratio reflects recent traffic rather than the whole lifetime.
+	window       time.Duration
+	windowStart  time.Time
+	failureCount int
+	successCount int
+	lastFailure  time.Time
+	state        CircuitState
+	mu           chan struct{}
 }
 
 // CircuitState represents circuit breaker state
@@ -122,8 +130,24 @@ func NewCircuitBreaker(threshold float64, halfOpenTimeout time.Duration) *Circui
 	return &CircuitBreaker{
 		threshold:       threshold,
 		halfOpenTimeout: halfOpenTimeout,
+		minRequests:     conf.DefaultCircuitBreakerMinRequests,
+		window:          conf.DefaultCircuitBreakerWindow,
+		windowStart:     time.Now(),
 		state:           CircuitStateClosed,
 		mu:              make(chan struct{}, 1),
+	}
+}
+
+// rollWindow resets the counters when the rolling window has elapsed so that
+// stale history does not influence the current failure ratio.
+func (cb *CircuitBreaker) rollWindow() {
+	if cb.window <= 0 {
+		return
+	}
+	now := time.Now()
+	if now.Sub(cb.windowStart) >= cb.window {
+		cb.resetCounters()
+		cb.windowStart = now
 	}
 }
 
@@ -147,6 +171,10 @@ func (cb *CircuitBreaker) Do(operation func() error) error {
 		return fmt.Errorf("invalid circuit breaker state: %v", cb.state)
 	}
 
+	if cb.state == CircuitStateClosed {
+		cb.rollWindow()
+	}
+
 	err := operation()
 	if err != nil {
 		cb.recordFailure()
@@ -164,7 +192,7 @@ func (cb *CircuitBreaker) recordFailure() {
 	total := cb.failureCount + cb.successCount
 	failureRate := float64(cb.failureCount) / float64(total)
 
-	if cb.state == CircuitStateClosed && failureRate >= cb.threshold {
+	if cb.state == CircuitStateClosed && total >= cb.minRequests && failureRate >= cb.threshold {
 		cb.state = CircuitStateOpen
 		log.Warnf("Circuit breaker opened: failure rate %.2f >= threshold %.2f",
 			failureRate, cb.threshold)
